@@ -18,6 +18,11 @@ var (
 	errBatchClosed = errors.New("treedb: batch closed")
 )
 
+// Defaults for TreeDB performance tuning
+const (
+	defaultFlushThreshold = 32 * 1024 * 1024 // 32MB write buffer
+)
+
 // Database implements ethdb.KeyValueStore
 type Database struct {
 	fn       string
@@ -30,8 +35,9 @@ type Database struct {
 // New returns a wrapped TreeDB object.
 func New(file string, cache int, handles int, namespace string, readonly bool) (*Database, error) {
 	openOpts := treedb.Options{
-		Dir:           file,
-		EnableCaching: true,
+		Dir:            file,
+		EnableCaching:  true,
+		FlushThreshold: defaultFlushThreshold,
 	}
 
 	tdb, err := treedb.Open(openOpts)
