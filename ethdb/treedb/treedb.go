@@ -36,8 +36,7 @@ type Database struct {
 func New(file string, cache int, handles int, namespace string, readonly bool) (*Database, error) {
 	openOpts := treedb.Options{
 		Dir:            file,
-		EnableCaching:  true,
-		FlushThreshold: defaultFlushThreshold,
+		FlushThreshold: int64(defaultFlushThreshold),
 	}
 
 	tdb, err := treedb.Open(openOpts)
@@ -218,12 +217,11 @@ func (b *batch) Write() error {
 		return errBatchClosed
 	}
 
-	tbInt := b.db.db.NewBatch()
-	tb, ok := tbInt.(*treedb.Batch)
-	if !ok {
-		return errors.New("treedb: failed to cast batch")
+	tb := b.db.db.NewBatch()
+	if tb == nil {
+		return errBatchClosed
 	}
-	defer tb.Close()
+	defer func() { _ = tb.Close() }()
 
 	for _, op := range b.ops {
 		if op.isDelete {
@@ -267,7 +265,7 @@ func (b *batch) Replay(w ethdb.KeyValueWriter) error {
 // Iterator implementation
 
 type iterator struct {
-	iter  *treedb.Iterator
+	iter  treedb.Iterator
 	start []byte
 	end   []byte
 	first bool
@@ -289,13 +287,9 @@ func (db *Database) NewIterator(prefix []byte, start []byte) ethdb.Iterator {
 	if err != nil {
 		return &iterator{err: err}
 	}
-	it, ok := itInt.(*treedb.Iterator)
-	if !ok {
-		return &iterator{err: errors.New("treedb: failed to cast iterator")}
-	}
 
 	return &iterator{
-		iter:  it,
+		iter:  itInt,
 		start: fullStart,
 		end:   fullEnd,
 		first: true,
@@ -346,7 +340,7 @@ func (it *iterator) Value() []byte {
 
 func (it *iterator) Release() {
 	if it.iter != nil {
-		it.iter.Close()
+		_ = it.iter.Close()
 		it.iter = nil
 	}
 }
