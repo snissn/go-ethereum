@@ -1,6 +1,3 @@
-//go:build ignore
-// +build ignore
-
 package treedb
 
 import (
@@ -29,7 +26,9 @@ func cloneBytes(b []byte) []byte {
 	if b == nil {
 		return nil
 	}
-	return append([]byte(nil), b...)
+	c := make([]byte, len(b))
+	copy(c, b)
+	return c
 }
 
 func concatBytes(a, b []byte) []byte {
