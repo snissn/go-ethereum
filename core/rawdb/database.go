@@ -346,6 +346,7 @@ func NewMemoryDatabase() ethdb.Database {
 const (
 	DBPebble  = "pebble"
 	DBLeveldb = "leveldb"
+	DBTreeDB  = "treedb"
 )
 
 // PreexistingDatabase checks the given data directory whether a database is already
