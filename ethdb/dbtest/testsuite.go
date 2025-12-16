@@ -27,6 +27,8 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 )
 
+var benchSink []byte
+
 // TestDatabaseSuite runs a suite of tests against a KeyValueStore database
 // implementation.
 func TestDatabaseSuite(t *testing.T, New func() ethdb.KeyValueStore) {
@@ -713,17 +715,96 @@ func BenchDatabaseSuite(b *testing.B, New func() ethdb.KeyValueStore) {
 		keys, vals   = makeDataset(1_000_000, 32, 32, false)
 		sKeys, sVals = makeDataset(1_000_000, 32, 32, true)
 	)
+	bulkWriteMetrics := func(b *testing.B, keys, vals [][]byte) {
+		if len(keys) == 0 {
+			return
+		}
+		bytesPerPut := len(keys[0])
+		if len(vals) > 0 {
+			bytesPerPut += len(vals[0])
+		}
+		b.SetBytes(int64(len(keys) * bytesPerPut))
+		b.ReportMetric(float64(len(keys)), "puts/op")
+	}
+
+	b.Run("Write1M", func(b *testing.B) {
+		benchWrite := func(b *testing.B, keys, vals [][]byte) {
+			b.ReportAllocs()
+			bulkWriteMetrics(b, keys, vals)
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				db := New()
+				for j := 0; j < len(keys); j++ {
+					if err := db.Put(keys[j], vals[j]); err != nil {
+						b.Fatal(err)
+					}
+				}
+				if err := db.Close(); err != nil {
+					b.Fatal(err)
+				}
+			}
+		}
+		b.Run("WriteSorted", func(b *testing.B) {
+			benchWrite(b, sKeys, sVals)
+		})
+		b.Run("WriteRandom", func(b *testing.B) {
+			benchWrite(b, keys, vals)
+		})
+	})
+	b.Run("BatchWrite1M", func(b *testing.B) {
+		benchBatchWrite := func(b *testing.B, keys, vals [][]byte) {
+			b.ReportAllocs()
+			bulkWriteMetrics(b, keys, vals)
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				db := New()
+				batch := db.NewBatch()
+				for j := 0; j < len(keys); j++ {
+					if err := batch.Put(keys[j], vals[j]); err != nil {
+						b.Fatal(err)
+					}
+					if batch.ValueSize() >= ethdb.IdealBatchSize {
+						if err := batch.Write(); err != nil {
+							b.Fatal(err)
+						}
+						batch.Reset()
+					}
+				}
+				if err := batch.Write(); err != nil {
+					b.Fatal(err)
+				}
+				if err := db.Close(); err != nil {
+					b.Fatal(err)
+				}
+			}
+		}
+		b.Run("WriteSorted", func(b *testing.B) {
+			benchBatchWrite(b, sKeys, sVals)
+		})
+		b.Run("WriteRandom", func(b *testing.B) {
+			benchBatchWrite(b, keys, vals)
+		})
+	})
+
 	// Run benchmarks sequentially
 	b.Run("Write", func(b *testing.B) {
 		benchWrite := func(b *testing.B, keys, vals [][]byte) {
-			b.ResetTimer()
 			b.ReportAllocs()
 
 			db := New()
-			defer db.Close()
+			b.ResetTimer()
 
-			for i := 0; i < len(keys); i++ {
-				db.Put(keys[i], vals[i])
+			for i := 0; i < b.N; i++ {
+				idx := i % len(keys)
+				if err := db.Put(keys[idx], vals[idx]); err != nil {
+					b.Fatal(err)
+				}
+			}
+			b.StopTimer()
+			if err := db.Close(); err != nil {
+				b.Fatal(err)
 			}
 		}
 		b.Run("WriteSorted", func(b *testing.B) {
@@ -736,16 +817,25 @@ func BenchDatabaseSuite(b *testing.B, New func() ethdb.KeyValueStore) {
 	b.Run("Read", func(b *testing.B) {
 		benchRead := func(b *testing.B, keys, vals [][]byte) {
 			db := New()
-			defer db.Close()
 
 			for i := 0; i < len(keys); i++ {
-				db.Put(keys[i], vals[i])
+				if err := db.Put(keys[i], vals[i]); err != nil {
+					b.Fatal(err)
+				}
 			}
-			b.ResetTimer()
 			b.ReportAllocs()
+			b.ResetTimer()
 
-			for i := 0; i < len(keys); i++ {
-				db.Get(keys[i])
+			for i := 0; i < b.N; i++ {
+				val, err := db.Get(keys[i%len(keys)])
+				if err != nil {
+					b.Fatal(err)
+				}
+				benchSink = val
+			}
+			b.StopTimer()
+			if err := db.Close(); err != nil {
+				b.Fatal(err)
 			}
 		}
 		b.Run("ReadSorted", func(b *testing.B) {
@@ -758,18 +848,28 @@ func BenchDatabaseSuite(b *testing.B, New func() ethdb.KeyValueStore) {
 	b.Run("Iteration", func(b *testing.B) {
 		benchIteration := func(b *testing.B, keys, vals [][]byte) {
 			db := New()
-			defer db.Close()
 
 			for i := 0; i < len(keys); i++ {
-				db.Put(keys[i], vals[i])
+				if err := db.Put(keys[i], vals[i]); err != nil {
+					b.Fatal(err)
+				}
 			}
-			b.ResetTimer()
 			b.ReportAllocs()
+			b.ResetTimer()
 
-			it := db.NewIterator(nil, nil)
-			for it.Next() {
+			for i := 0; i < b.N; i++ {
+				it := db.NewIterator(nil, nil)
+				for it.Next() {
+				}
+				if err := it.Error(); err != nil {
+					b.Fatal(err)
+				}
+				it.Release()
 			}
-			it.Release()
+			b.StopTimer()
+			if err := db.Close(); err != nil {
+				b.Fatal(err)
+			}
 		}
 		b.Run("IterationSorted", func(b *testing.B) {
 			benchIteration(b, sKeys, sVals)
@@ -780,17 +880,33 @@ func BenchDatabaseSuite(b *testing.B, New func() ethdb.KeyValueStore) {
 	})
 	b.Run("BatchWrite", func(b *testing.B) {
 		benchBatchWrite := func(b *testing.B, keys, vals [][]byte) {
-			b.ResetTimer()
 			b.ReportAllocs()
 
 			db := New()
-			defer db.Close()
-
 			batch := db.NewBatch()
-			for i := 0; i < len(keys); i++ {
-				batch.Put(keys[i], vals[i])
+			opsPerBatch := ethdb.IdealBatchSize / (32 + 32)
+			if opsPerBatch < 1 {
+				opsPerBatch = 1
 			}
-			batch.Write()
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				batch.Reset()
+				base := int(uint64(i) * uint64(opsPerBatch) % uint64(len(keys)))
+				for j := 0; j < opsPerBatch; j++ {
+					idx := (base + j) % len(keys)
+					if err := batch.Put(keys[idx], vals[idx]); err != nil {
+						b.Fatal(err)
+					}
+				}
+				if err := batch.Write(); err != nil {
+					b.Fatal(err)
+				}
+			}
+			b.StopTimer()
+			if err := db.Close(); err != nil {
+				b.Fatal(err)
+			}
 		}
 		b.Run("BenchWriteSorted", func(b *testing.B) {
 			benchBatchWrite(b, sKeys, sVals)
@@ -802,15 +918,23 @@ func BenchDatabaseSuite(b *testing.B, New func() ethdb.KeyValueStore) {
 	b.Run("DeleteRange", func(b *testing.B) {
 		benchDeleteRange := func(b *testing.B, count int) {
 			db := New()
-			defer db.Close()
-
-			for i := 0; i < count; i++ {
-				db.Put([]byte(strconv.Itoa(i)), nil)
-			}
-			b.ResetTimer()
 			b.ReportAllocs()
+			b.ResetTimer()
 
-			db.DeleteRange([]byte("0"), []byte("999999999"))
+			for i := 0; i < b.N; i++ {
+				for j := 0; j < count; j++ {
+					if err := db.Put([]byte(strconv.Itoa(j)), nil); err != nil {
+						b.Fatal(err)
+					}
+				}
+				if err := db.DeleteRange([]byte("0"), []byte("999999999")); err != nil {
+					b.Fatal(err)
+				}
+			}
+			b.StopTimer()
+			if err := db.Close(); err != nil {
+				b.Fatal(err)
+			}
 		}
 		b.Run("DeleteRange100", func(b *testing.B) {
 			benchDeleteRange(b, 100)
@@ -825,20 +949,29 @@ func BenchDatabaseSuite(b *testing.B, New func() ethdb.KeyValueStore) {
 	b.Run("BatchDeleteRange", func(b *testing.B) {
 		benchBatchDeleteRange := func(b *testing.B, count int) {
 			db := New()
-			defer db.Close()
 
-			// Prepare data
-			for i := 0; i < count; i++ {
-				db.Put([]byte(strconv.Itoa(i)), nil)
-			}
-
-			b.ResetTimer()
 			b.ReportAllocs()
+			b.ResetTimer()
 
-			// Create batch and delete range
 			batch := db.NewBatch()
-			batch.DeleteRange([]byte("0"), []byte("999999999"))
-			batch.Write()
+			for i := 0; i < b.N; i++ {
+				for j := 0; j < count; j++ {
+					if err := db.Put([]byte(strconv.Itoa(j)), nil); err != nil {
+						b.Fatal(err)
+					}
+				}
+				batch.Reset()
+				if err := batch.DeleteRange([]byte("0"), []byte("999999999")); err != nil {
+					b.Fatal(err)
+				}
+				if err := batch.Write(); err != nil {
+					b.Fatal(err)
+				}
+			}
+			b.StopTimer()
+			if err := db.Close(); err != nil {
+				b.Fatal(err)
+			}
 		}
 
 		b.Run("BatchDeleteRange100", func(b *testing.B) {
@@ -855,36 +988,52 @@ func BenchDatabaseSuite(b *testing.B, New func() ethdb.KeyValueStore) {
 	b.Run("BatchMixedOps", func(b *testing.B) {
 		benchBatchMixedOps := func(b *testing.B, count int) {
 			db := New()
-			defer db.Close()
 
-			// Prepare initial data
-			for i := 0; i < count; i++ {
-				db.Put([]byte(strconv.Itoa(i)), []byte("val"))
-			}
-
-			b.ResetTimer()
 			b.ReportAllocs()
+			b.ResetTimer()
 
-			// Create batch with mixed operations
 			batch := db.NewBatch()
+			for i := 0; i < b.N; i++ {
+				if err := db.DeleteRange([]byte("0"), []byte("999999999")); err != nil {
+					b.Fatal(err)
+				}
+				for j := 0; j < count; j++ {
+					if err := db.Put([]byte(strconv.Itoa(j)), []byte("val")); err != nil {
+						b.Fatal(err)
+					}
+				}
+				batch.Reset()
 
-			// Add some new keys
-			for i := 0; i < count/10; i++ {
-				batch.Put([]byte(strconv.Itoa(count+i)), []byte("new-val"))
+				// Add some new keys
+				for j := 0; j < count/10; j++ {
+					if err := batch.Put([]byte(strconv.Itoa(count+j)), []byte("new-val")); err != nil {
+						b.Fatal(err)
+					}
+				}
+
+				// Delete some individual keys
+				for j := 0; j < count/20; j++ {
+					if err := batch.Delete([]byte(strconv.Itoa(j * 2))); err != nil {
+						b.Fatal(err)
+					}
+				}
+
+				// Delete range of keys
+				rangeStart := count / 2
+				rangeEnd := count * 3 / 4
+				if err := batch.DeleteRange([]byte(strconv.Itoa(rangeStart)), []byte(strconv.Itoa(rangeEnd))); err != nil {
+					b.Fatal(err)
+				}
+
+				// Write the batch
+				if err := batch.Write(); err != nil {
+					b.Fatal(err)
+				}
 			}
-
-			// Delete some individual keys
-			for i := 0; i < count/20; i++ {
-				batch.Delete([]byte(strconv.Itoa(i * 2)))
+			b.StopTimer()
+			if err := db.Close(); err != nil {
+				b.Fatal(err)
 			}
-
-			// Delete range of keys
-			rangeStart := count / 2
-			rangeEnd := count * 3 / 4
-			batch.DeleteRange([]byte(strconv.Itoa(rangeStart)), []byte(strconv.Itoa(rangeEnd)))
-
-			// Write the batch
-			batch.Write()
 		}
 
 		b.Run("BatchMixedOps100", func(b *testing.B) {

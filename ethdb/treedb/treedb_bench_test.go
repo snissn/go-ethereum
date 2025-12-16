@@ -14,6 +14,7 @@ func BenchmarkTreeDB(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
+		b.Cleanup(func() { _ = os.RemoveAll(dir) })
 		db, err := New(dir, 0, 0, "", false)
 		if err != nil {
 			b.Fatal(err)
