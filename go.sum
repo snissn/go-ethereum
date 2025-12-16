@@ -336,8 +336,14 @@ github.com/russross/blackfriday/v2 v2.1.0 h1:JIOH55/0cWyOuilr9/qlrm0BSXldqnqwMsf
 github.com/russross/blackfriday/v2 v2.1.0/go.mod h1:+Rmxgy9KzJVeS9/2gXHxylqXiyQDYRxCVz55jmeOWTM=
 github.com/shirou/gopsutil v3.21.4-0.20210419000835-c7a38de76ee5+incompatible h1:Bn1aCHHRnjv4Bl16T8rcaFjYSrGrIZvpiGO6P3Q4GpU=
 github.com/shirou/gopsutil v3.21.4-0.20210419000835-c7a38de76ee5+incompatible/go.mod h1:5b4v6he4MtMOwMlS0TUMTu2PcXUg8+E1lC7eC3UO/RA=
+github.com/snissn/gomap v0.0.0-20251215215020-ff804ca67566 h1:6pPvikJqNBow3rYzjSCKAyN1Btud//GCHA1Sk5zJoKE=
+github.com/snissn/gomap v0.0.0-20251215215020-ff804ca67566/go.mod h1:B4MR8jGVrZRcTGRa3ILoMJnWm+Lt9RYqBSq7J25bpIY=
 github.com/snissn/gomap v0.0.0-20251216034837-f28cf3caf2e1 h1:/eRPfXmjvf+GFNVkN/qcSpfyei/ZF3xdsCgRu0tsDEo=
 github.com/snissn/gomap v0.0.0-20251216034837-f28cf3caf2e1/go.mod h1:B4MR8jGVrZRcTGRa3ILoMJnWm+Lt9RYqBSq7J25bpIY=
+github.com/snissn/gomap v0.0.0-20251216043206-c8c6d56fbea0 h1:0LokJDePhZQGjosOomV7+CKuCMqJJxhw4k/vkMZNFmw=
+github.com/snissn/gomap v0.0.0-20251216043206-c8c6d56fbea0/go.mod h1:F9Wwk6RrQ6JaUM2TFIJ4X6g1pQLl7WXbY2xQDiRbP7U=
+github.com/snissn/gomap v0.0.0-20251216043310-4f70e508eaa3 h1:VgoYhAFDmkB6DEEVo1Dya/Ao4KtPlIlzrsQ7IGjy2LU=
+github.com/snissn/gomap v0.0.0-20251216043310-4f70e508eaa3/go.mod h1:F9Wwk6RrQ6JaUM2TFIJ4X6g1pQLl7WXbY2xQDiRbP7U=
 github.com/status-im/keycard-go v0.2.0 h1:QDLFswOQu1r5jsycloeQh3bVU8n/NatHHaZobtDnDzA=
 github.com/status-im/keycard-go v0.2.0/go.mod h1:wlp8ZLbsmrF6g6WjugPAx+IzoLrkdf9+mHxBEeo3Hbg=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
