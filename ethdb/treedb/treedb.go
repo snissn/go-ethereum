@@ -10,26 +10,13 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 
 	treedb "github.com/snissn/gomap/TreeDB"
+	treedbbatch "github.com/snissn/gomap/TreeDB/batch"
 )
 
 var (
 	errKeyEmpty    = errors.New("treedb: key empty")
 	errBatchClosed = errors.New("treedb: batch closed")
 )
-
-// Defaults for TreeDB performance tuning.
-const (
-	defaultFlushThreshold = 4 * 1024 * 1024 // 4MB write buffer (cached mode)
-)
-
-func cloneBytes(b []byte) []byte {
-	if b == nil {
-		return nil
-	}
-	c := make([]byte, len(b))
-	copy(c, b)
-	return c
-}
 
 func concatBytes(a, b []byte) []byte {
 	if len(a) == 0 {
@@ -63,10 +50,8 @@ type Database struct {
 // other geth DB backends. TreeDB currently ignores them.
 func New(file string, cache int, handles int, namespace string, readonly bool) (*Database, error) {
 	openOpts := treedb.Options{
-		Dir:            file,
-		ChunkSize:      64 * 1024 * 1024,
-		FlushThreshold: int64(defaultFlushThreshold),
-		Mode:           treedb.ModeCached,
+		Dir:  file,
+		Mode: treedb.ModeCached,
 	}
 
 	tdb, err := treedb.Open(openOpts)
@@ -111,13 +96,7 @@ func (db *Database) Get(key []byte) ([]byte, error) {
 	if key == nil {
 		return nil, errKeyEmpty
 	}
-	value, err := db.db.Get(key)
-	if err != nil {
-		return nil, err
-	}
-	// TreeDB may return shared memory in cached mode (memtables). Copy to satisfy
-	// ethdb.KeyValueReader contract.
-	return cloneBytes(value), nil
+	return db.db.Get(key)
 }
 
 func (db *Database) Put(key []byte, value []byte) error {
@@ -221,24 +200,16 @@ type batch struct {
 	db *Database
 
 	tb treedb.Batch
-
-	ops      []batchOp
-	byteSize int
-}
-
-type batchOp struct {
-	del   bool
-	key   []byte
-	value []byte
 }
 
 func newBatch(db *Database, sizeHint int) *batch {
 	b := &batch{db: db}
-	if sizeHint > 0 {
-		b.ops = make([]batchOp, 0, sizeHint)
-	}
 	if db != nil && db.db != nil {
-		b.tb = db.db.NewBatch()
+		if sizeHint > 0 {
+			b.tb = db.db.NewBatchWithSize(sizeHint)
+		} else {
+			b.tb = db.db.NewBatch()
+		}
 	}
 	return b
 }
@@ -250,14 +221,8 @@ func (b *batch) Put(key, value []byte) error {
 	if value == nil {
 		value = []byte{}
 	}
-
-	k := cloneBytes(key)
-	v := cloneBytes(value)
-	b.ops = append(b.ops, batchOp{key: k, value: v})
-	b.byteSize += len(k) + len(v)
-
 	if b.tb != nil {
-		return b.tb.Set(k, v)
+		return b.tb.Set(key, value)
 	}
 	return nil
 }
@@ -266,13 +231,6 @@ func (b *batch) Delete(key []byte) error {
 	if key == nil {
 		return errKeyEmpty
 	}
-
-	return b.deleteOwned(cloneBytes(key))
-}
-
-func (b *batch) deleteOwned(key []byte) error {
-	b.ops = append(b.ops, batchOp{del: true, key: key})
-	b.byteSize += len(key)
 	if b.tb != nil {
 		return b.tb.Delete(key)
 	}
@@ -287,40 +245,30 @@ func (b *batch) DeleteRange(start, end []byte) error {
 		if end != nil && bytes.Compare(k, end) >= 0 {
 			break
 		}
-		if err := b.deleteOwned(k); err != nil {
+		if err := b.Delete(k); err != nil {
 			return err
 		}
 	}
 	return it.Error()
 }
 
-func (b *batch) ValueSize() int { return b.byteSize }
+func (b *batch) ValueSize() int {
+	if b.tb == nil {
+		return 0
+	}
+	s, _ := b.tb.GetByteSize()
+	return s
+}
 
 func (b *batch) Write() error {
 	if b.db == nil || b.db.db == nil {
 		return errBatchClosed
 	}
 	if b.tb == nil {
-		// If the DB is open but the batch was created while closed, rebuild.
-		b.tb = b.db.db.NewBatch()
-		if b.tb == nil {
-			return errBatchClosed
-		}
-		for _, op := range b.ops {
-			if op.del {
-				if err := b.tb.Delete(op.key); err != nil {
-					return err
-				}
-				continue
-			}
-			if err := b.tb.Set(op.key, op.value); err != nil {
-				return err
-			}
-		}
+		return errBatchClosed
 	}
 
 	err := b.tb.Write()
-	// TreeDB batches are single-use; auto-reset on success for ethdb compatibility.
 	if err == nil {
 		b.Reset()
 	}
@@ -331,8 +279,6 @@ func (b *batch) Reset() {
 	if b.tb != nil {
 		_ = b.tb.Close()
 	}
-	b.ops = b.ops[:0]
-	b.byteSize = 0
 	if b.db != nil && b.db.db != nil {
 		b.tb = b.db.db.NewBatch()
 	} else {
@@ -341,18 +287,15 @@ func (b *batch) Reset() {
 }
 
 func (b *batch) Replay(w ethdb.KeyValueWriter) error {
-	for _, op := range b.ops {
-		if op.del {
-			if err := w.Delete(op.key); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := w.Put(op.key, op.value); err != nil {
-			return err
-		}
+	if b.tb == nil {
+		return nil
 	}
-	return nil
+	return b.tb.Replay(func(e treedbbatch.Entry) error {
+		if e.Type == treedbbatch.OpDelete {
+			return w.Delete(e.Key)
+		}
+		return w.Put(e.Key, e.Value)
+	})
 }
 
 // Iterator implementation.
