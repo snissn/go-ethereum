@@ -97,7 +97,7 @@ func TestCustomGenesis(t *testing.T) {
 	}
 }
 
-// TestCustomBackend that the backend selection and detection (leveldb vs pebble) works properly.
+// TestCustomBackend that the backend selection and detection (leveldb vs pebble vs treedb) works properly.
 func TestCustomBackend(t *testing.T) {
 	t.Parallel()
 	// Test pebble, but only on 64-bit platforms
@@ -173,6 +173,15 @@ func TestCustomBackend(t *testing.T) {
 			initArgs:   []string{"--db.engine", "pebble"},
 			execExpect: "0x0000000000001338",
 		},
+		{ // Explicit TreeDB
+			initArgs:   []string{"--db.engine", "treedb"},
+			execArgs:   []string{"--db.engine", "treedb"},
+			execExpect: "0x0000000000001338",
+		},
+		{ // Explicit TreeDB, then auto-discover
+			initArgs:   []string{"--db.engine", "treedb"},
+			execExpect: "0x0000000000001338",
+		},
 		{ // Can't start pebble on top of leveldb
 			initArgs:   []string{"--db.engine", "leveldb"},
 			execArgs:   []string{"--db.engine", "pebble"},
@@ -183,16 +192,26 @@ func TestCustomBackend(t *testing.T) {
 			execArgs:   []string{"--db.engine", "leveldb"},
 			execExpect: `Fatal: Failed to register the Ethereum service: db.engine choice was leveldb but found pre-existing pebble database in specified data directory`,
 		},
+		{ // Can't start pebble on top of TreeDB
+			initArgs:   []string{"--db.engine", "treedb"},
+			execArgs:   []string{"--db.engine", "pebble"},
+			execExpect: `Fatal: Failed to register the Ethereum service: db.engine choice was pebble but found pre-existing treedb database in specified data directory`,
+		},
+		{ // Can't start TreeDB on top of pebble
+			initArgs:   []string{"--db.engine", "pebble"},
+			execArgs:   []string{"--db.engine", "treedb"},
+			execExpect: `Fatal: Failed to register the Ethereum service: db.engine choice was treedb but found pre-existing pebble database in specified data directory`,
+		},
 		{ // Reject invalid backend choice
 			initArgs:   []string{"--db.engine", "mssql"},
-			initExpect: `Fatal: Invalid choice for db.engine 'mssql', allowed 'leveldb' or 'pebble'`,
+			initExpect: `Fatal: Invalid choice for db.engine 'mssql', allowed 'leveldb', 'pebble', or 'treedb'`,
 			// Since the init fails, this will return the (default) mainnet genesis
 			// block nonce
 			execExpect: `0x0000000000000042`,
 		},
 	} {
 		if err := testfunc(t, tt); err != nil {
-			t.Fatalf("test %d-leveldb: %v", i, err)
+			t.Fatalf("test %d: %v", i, err)
 		}
 	}
 }

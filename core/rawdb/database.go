@@ -347,22 +347,36 @@ func NewMemoryDatabase() ethdb.Database {
 const (
 	DBPebble  = "pebble"
 	DBLeveldb = "leveldb"
+	DBTreedb  = "treedb"
 )
 
 // PreexistingDatabase checks the given data directory whether a database is already
 // instantiated at that location, and if so, returns the type of database (or the
 // empty string).
 func PreexistingDatabase(path string) string {
-	if _, err := os.Stat(filepath.Join(path, "CURRENT")); err != nil {
-		return "" // No pre-existing db
-	}
-	if matches, err := filepath.Glob(filepath.Join(path, "OPTIONS*")); len(matches) > 0 || err != nil {
-		if err != nil {
-			panic(err) // only possible if the pattern is malformed
+	if _, err := os.Stat(filepath.Join(path, "CURRENT")); err == nil {
+		if matches, err := filepath.Glob(filepath.Join(path, "OPTIONS*")); len(matches) > 0 || err != nil {
+			if err != nil {
+				panic(err) // only possible if the pattern is malformed
+			}
+			return DBPebble
 		}
-		return DBPebble
+		return DBLeveldb
 	}
-	return DBLeveldb
+	if isTreeDBDir(path) {
+		return DBTreedb
+	}
+	return "" // No pre-existing db
+}
+
+func isTreeDBDir(path string) bool {
+	if info, err := os.Stat(filepath.Join(path, "maindb", "index.db")); err == nil && !info.IsDir() {
+		return true
+	}
+	if info, err := os.Stat(filepath.Join(path, "index.db")); err == nil && !info.IsDir() {
+		return true
+	}
+	return false
 }
 
 type counter uint64
