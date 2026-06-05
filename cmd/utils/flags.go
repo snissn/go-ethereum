@@ -54,6 +54,7 @@ import (
 	"github.com/ethereum/go-ethereum/eth/tracers"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/ethdb/remotedb"
+	treedbethdb "github.com/ethereum/go-ethereum/ethdb/treedb"
 	"github.com/ethereum/go-ethereum/ethstats"
 	"github.com/ethereum/go-ethereum/graphql"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
@@ -2281,20 +2282,26 @@ func SplitTagsFlag(tagsFlag string) map[string]string {
 
 // MakeChainDatabase opens a database using the flags passed to the client and will hard crash if it fails.
 func MakeChainDatabase(ctx *cli.Context, stack *node.Node, readonly bool) ethdb.Database {
+	chainDb, err := openChainDatabase(ctx, stack, readonly)
+	if err != nil {
+		Fatalf("Could not open database: %v", err)
+	}
+	return chainDb
+}
+
+func openChainDatabase(ctx *cli.Context, stack *node.Node, readonly bool) (ethdb.Database, error) {
 	var (
 		cache   = ctx.Int(CacheFlag.Name) * ctx.Int(CacheDatabaseFlag.Name) / 100
 		handles = MakeDatabaseHandles(ctx.Int(FDLimitFlag.Name))
-		err     error
-		chainDb ethdb.Database
 	)
 	switch {
 	case ctx.IsSet(RemoteDBFlag.Name):
 		log.Info("Using remote db", "url", ctx.String(RemoteDBFlag.Name), "headers", len(ctx.StringSlice(HttpHeaderFlag.Name)))
 		client, err := DialRPCWithHeaders(ctx.String(RemoteDBFlag.Name), ctx.StringSlice(HttpHeaderFlag.Name))
 		if err != nil {
-			break
+			return nil, err
 		}
-		chainDb = remotedb.New(client)
+		return remotedb.New(client), nil
 	default:
 		options := node.DatabaseOptions{
 			ReadOnly:          readonly,
@@ -2304,16 +2311,14 @@ func MakeChainDatabase(ctx *cli.Context, stack *node.Node, readonly bool) ethdb.
 			MetricsNamespace:  "eth/db/chaindata/",
 			EraDirectory:      ctx.String(EraFlag.Name),
 		}
-		chainDb, err = stack.OpenDatabaseWithOptions("chaindata", options)
+		return stack.OpenDatabaseWithOptions("chaindata", options)
 	}
-	if err != nil {
-		Fatalf("Could not open database: %v", err)
-	}
-	return chainDb
 }
 
 // tryMakeReadOnlyDatabase try to open the chain database in read-only mode,
-// or fallback to write mode if the database is not initialized.
+// or fallback to write mode if the database is not initialized or if the
+// existing TreeDB database must replay command-WAL recovery before read-only
+// inspection can succeed.
 func tryMakeReadOnlyDatabase(ctx *cli.Context, stack *node.Node) ethdb.Database {
 	// If the database doesn't exist we need to open it in write-mode to allow
 	// the engine to create files.
@@ -2321,7 +2326,22 @@ func tryMakeReadOnlyDatabase(ctx *cli.Context, stack *node.Node) ethdb.Database 
 	if rawdb.PreexistingDatabase(stack.ResolvePath("chaindata")) == "" {
 		readonly = false
 	}
-	return MakeChainDatabase(ctx, stack, readonly)
+	if !readonly {
+		return MakeChainDatabase(ctx, stack, false)
+	}
+	chainDb, err := openChainDatabase(ctx, stack, true)
+	if err == nil {
+		return chainDb
+	}
+	if treedbethdb.IsRecoveryRequired(err) {
+		log.Warn("Read-only TreeDB open requires recovery; retrying read-write", "err", err)
+		chainDb, err = openChainDatabase(ctx, stack, false)
+		if err == nil {
+			return chainDb
+		}
+	}
+	Fatalf("Could not open database: %v", err)
+	return nil
 }
 
 func IsNetworkPreset(ctx *cli.Context) bool {
