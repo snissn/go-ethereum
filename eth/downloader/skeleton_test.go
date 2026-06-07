@@ -405,6 +405,24 @@ func TestSkeletonSyncMissingContinuationHead(t *testing.T) {
 	}
 }
 
+func TestSkeletonSyncInitDropsMissingExtensionHead(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	blob, _ := json.Marshal(&skeletonProgress{Subchains: []*subchain{{
+		Head: 42,
+		Tail: 1,
+	}}})
+	rawdb.WriteSkeletonSyncStatus(db, blob)
+
+	head := &types.Header{Number: big.NewInt(43)}
+	skeleton := &skeleton{db: db}
+	skeleton.initSync(head)
+
+	expect := skeletonExpect{state: []*subchain{{Head: 43, Tail: 43}}}
+	if err := checkSkeletonProgress(db, false, nil, expect); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // Tests that a running skeleton sync can be extended with properly linked up
 // headers but not with side chains.
 func TestSkeletonSyncExtend(t *testing.T) {

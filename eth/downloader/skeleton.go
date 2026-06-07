@@ -322,10 +322,13 @@ waitHead:
 
 				case errors.Is(err, errSyncMissingHead):
 					// The in-memory progress pointed at a skeleton header that is not
-					// available from the database. Drop back to the startup wait loop
-					// and let the next forced beacon head rebuild the skeleton state
-					// instead of crashing on a nil continuation head.
+					// available from the database. Clear the invalid progress before
+					// dropping back to the startup wait loop so the next forced beacon
+					// head rebuilds the skeleton state instead of extending stale
+					// metadata and hitting the same missing header again.
 					log.Warn("Restarting beacon sync after missing skeleton head", "err", err)
+					rawdb.DeleteSkeletonSyncStatus(s.db)
+					s.progress = nil
 					continue waitHead
 
 				case err == errTerminated:
@@ -625,7 +628,10 @@ func (s *skeleton) initSync(head *types.Header) {
 				lastchain := s.progress.Subchains[0]
 				if lastchain.Head == headchain.Tail-1 {
 					lasthead := rawdb.ReadSkeletonHeader(s.db, lastchain.Head)
-					if lasthead.Hash() == head.ParentHash {
+					if lasthead == nil {
+						log.Warn("Dropping skeleton subchain with missing head", "head", lastchain.Head, "tail", lastchain.Tail)
+						s.progress.Subchains = s.progress.Subchains[1:]
+					} else if lasthead.Hash() == head.ParentHash {
 						log.Debug("Extended skeleton subchain with new head", "head", headchain.Tail, "tail", lastchain.Tail)
 						lastchain.Head = headchain.Tail
 						extended = true
