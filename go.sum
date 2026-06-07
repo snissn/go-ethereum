@@ -357,8 +357,12 @@ github.com/snissn/go-crc32-asm v0.0.0-20260522204125-08945951423a h1:uqSq50AAT36
 github.com/snissn/go-crc32-asm v0.0.0-20260522204125-08945951423a/go.mod h1:PDwKLbWpRDAN2IPbK9PxIgSx0YdwQaSOLWObRawQJ58=
 github.com/snissn/gomap v0.5.1-0.20260606191850-7c38b993ad20 h1:pF+IS+3RRErdctbvDY8ngkuvYcyYeqMFq2TPZaGOYXI=
 github.com/snissn/gomap v0.5.1-0.20260606191850-7c38b993ad20/go.mod h1:WSaOg+m8hiLvRpKSqn3ylr0H4ZMKOHghhJqIg1/RO/4=
+github.com/snissn/gomap v0.5.1-0.20260607053212-5dcfaac81ea2 h1:ZRl909TwbcWBG0tWYlk3GmA8fJg3/jNEHlGUm7mGzhY=
+github.com/snissn/gomap v0.5.1-0.20260607053212-5dcfaac81ea2/go.mod h1:WSaOg+m8hiLvRpKSqn3ylr0H4ZMKOHghhJqIg1/RO/4=
 github.com/snissn/gomap/TreeDB/integration/gethethdb v0.0.0-20260606191850-7c38b993ad20 h1:7MZNmxeiaoYhB6oVqoBgJQ1xBMQBXgfEUJvc0BV+mKA=
 github.com/snissn/gomap/TreeDB/integration/gethethdb v0.0.0-20260606191850-7c38b993ad20/go.mod h1:Ww8bNDF/RbvAuvGdbkhwIolF7XIXuJNORTnyvyTamJE=
+github.com/snissn/gomap/TreeDB/integration/gethethdb v0.0.0-20260607053212-5dcfaac81ea2 h1:bxbrnfY0myK/Qn3xqUZoA31P9EK71tYFT23aa1HFCc4=
+github.com/snissn/gomap/TreeDB/integration/gethethdb v0.0.0-20260607053212-5dcfaac81ea2/go.mod h1:Ww8bNDF/RbvAuvGdbkhwIolF7XIXuJNORTnyvyTamJE=
 github.com/status-im/keycard-go v0.2.0 h1:QDLFswOQu1r5jsycloeQh3bVU8n/NatHHaZobtDnDzA=
 github.com/status-im/keycard-go v0.2.0/go.mod h1:wlp8ZLbsmrF6g6WjugPAx+IzoLrkdf9+mHxBEeo3Hbg=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
