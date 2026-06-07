@@ -391,6 +391,20 @@ func TestSkeletonSyncInit(t *testing.T) {
 	}
 }
 
+func TestSkeletonSyncMissingContinuationHead(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	skeleton := &skeleton{
+		db: db,
+		progress: &skeletonProgress{Subchains: []*subchain{{
+			Head: 42,
+			Tail: 42,
+		}}},
+	}
+	if _, err := skeleton.sync(nil); !errors.Is(err, errSyncMissingHead) {
+		t.Fatalf("missing continuation head error mismatch: have %v, want %v", err, errSyncMissingHead)
+	}
+}
+
 // Tests that a running skeleton sync can be extended with properly linked up
 // headers but not with side chains.
 func TestSkeletonSyncExtend(t *testing.T) {
