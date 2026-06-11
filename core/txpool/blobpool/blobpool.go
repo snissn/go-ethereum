@@ -478,9 +478,10 @@ type BlobPool struct {
 	signer types.Signer // Transaction signer to use for sender recovery
 	chain  BlockChain   // Chain object to access the state through
 
-	head   atomic.Pointer[types.Header] // Current head of the chain
-	state  *state.StateDB               // Current state at the head of the chain
-	gasTip atomic.Pointer[uint256.Int]  // Currently accepted minimum gas tip
+	head          atomic.Pointer[types.Header] // Current head of the chain
+	state         *state.StateDB               // Current state at the head of the chain
+	stateFallback bool                         // Whether state was initialized from a non-head fallback; guarded by lock after Init
+	gasTip        atomic.Pointer[uint256.Int]  // Currently accepted minimum gas tip
 
 	lookup *lookup                          // Lookup table mapping blobs to txs and txs to billy entries
 	index  map[common.Address][]*blobTxMeta // Blob transactions grouped by accounts, sorted by nonce
@@ -546,15 +547,13 @@ func (p *BlobPool) Init(gasTip uint64, head *types.Header, reserver txpool.Reser
 	// Initialize the state with head block, or fallback to empty one in
 	// case the head state is not available (might occur when node is not
 	// fully synced).
-	state, err := p.chain.StateAt(head)
-	if err != nil {
-		state, err = p.chain.StateAt(p.chain.Genesis().Header())
-	}
+	state, stateFallback, err := txpool.StateAtOrEmpty(p.chain, head)
 	if err != nil {
 		return err
 	}
 	p.head.Store(head)
 	p.state = state
+	p.stateFallback = stateFallback
 
 	// Create new slotter for pre-Osaka blob configuration.
 	slotter := newSlotter(params.BlobTxMaxBlobs)
@@ -637,9 +636,18 @@ func (p *BlobPool) Init(gasTip uint64, head *types.Header, reserver txpool.Reser
 	}
 
 	// Sort the indexed transactions by nonce and delete anything gapped, create
-	// the eviction heap of anyone still standing
+	// the eviction heap of anyone still standing. If startup used a fallback
+	// state, initialize eviction metadata but defer state-dependent pruning until
+	// Reset loads the real head state.
 	for addr := range p.index {
-		p.recheck(addr, nil)
+		if p.stateFallback {
+			p.initEvictionMetadata(addr)
+		} else {
+			p.recheck(addr, nil)
+		}
+	}
+	if p.stateFallback {
+		log.Warn("Deferred blobpool state recheck until head state is available")
 	}
 	var (
 		basefee = uint256.MustFromBig(eip1559.CalcBaseFee(p.chain.Config(), head))
@@ -756,6 +764,82 @@ func (p *BlobPool) trackTransaction(meta *blobTxMeta, sender common.Address) err
 
 // recheck verifies the pool's content for a specific account and drops anything
 // that does not fit anymore (dangling or filled nonce, overdraft).
+func (p *BlobPool) initEvictionMetadata(addr common.Address) {
+	txs := p.index[addr]
+	if len(txs) == 0 {
+		return
+	}
+	drop := func(drop []*blobTxMeta, logfn func(ids, nonces []uint64)) {
+		var (
+			ids    []uint64
+			nonces []uint64
+		)
+		for _, tx := range drop {
+			ids = append(ids, tx.id)
+			nonces = append(nonces, tx.nonce)
+			if p.spent[addr] != nil && tx.costCap != nil {
+				p.spent[addr] = new(uint256.Int).Sub(p.spent[addr], tx.costCap)
+			}
+			p.stored -= uint64(tx.storageSize)
+			p.lookup.untrack(tx)
+		}
+		logfn(ids, nonces)
+		for _, id := range ids {
+			if err := p.store.Delete(id); err != nil {
+				log.Error("Failed to delete blob transaction", "from", addr, "id", id, "err", err)
+			}
+		}
+	}
+	sort.Slice(txs, func(i, j int) bool {
+		return txs[i].nonce < txs[j].nonce
+	})
+	txs[0].evictionExecTip = txs[0].execTipCap
+	txs[0].evictionExecFeeJumps = txs[0].basefeeJumps
+	txs[0].evictionBlobFeeJumps = txs[0].blobfeeJumps
+	for i := 1; i < len(txs); i++ {
+		if txs[i].nonce == txs[i-1].nonce+1 {
+			txs[i].evictionExecTip = txs[i-1].evictionExecTip
+			if txs[i].evictionExecTip.Cmp(txs[i].execTipCap) > 0 {
+				txs[i].evictionExecTip = txs[i].execTipCap
+			}
+			txs[i].evictionExecFeeJumps = txs[i-1].evictionExecFeeJumps
+			if txs[i].evictionExecFeeJumps > txs[i].basefeeJumps {
+				txs[i].evictionExecFeeJumps = txs[i].basefeeJumps
+			}
+			txs[i].evictionBlobFeeJumps = txs[i-1].evictionBlobFeeJumps
+			if txs[i].evictionBlobFeeJumps > txs[i].blobfeeJumps {
+				txs[i].evictionBlobFeeJumps = txs[i].blobfeeJumps
+			}
+			continue
+		}
+		if txs[i].nonce == txs[i-1].nonce {
+			drop(txs[i:i+1], func(ids, nonces []uint64) {
+				log.Error("Dropping repeat nonce blob transaction", "from", addr, "nonce", txs[i].nonce, "id", ids[0])
+				dropRepeatedMeter.Mark(1)
+			})
+			txs = append(txs[:i], txs[i+1:]...)
+			p.index[addr] = txs
+			i--
+			continue
+		}
+		drop(txs[i:], func(ids, nonces []uint64) {
+			log.Error("Dropping gapped blob transactions", "from", addr, "missing", txs[i-1].nonce+1, "drop", nonces, "ids", ids)
+			dropGappedMeter.Mark(int64(len(ids)))
+		})
+		txs = txs[:i]
+		p.index[addr] = txs
+		break
+	}
+	if len(txs) > maxTxsPerAccount {
+		drop(txs[maxTxsPerAccount:], func(ids, nonces []uint64) {
+			log.Error("Dropping over-capped blob transactions", "from", addr, "kept", maxTxsPerAccount, "drop", nonces, "ids", ids)
+			dropOvercappedMeter.Mark(int64(len(ids)))
+		})
+		txs = txs[:maxTxsPerAccount]
+		p.index[addr] = txs
+	}
+}
+
 func (p *BlobPool) recheck(addr common.Address, inclusions map[common.Hash]uint64) {
 	// Sort the transactions belonging to the account so reinjects can be simpler
 	txs := p.index[addr]
@@ -1051,10 +1135,14 @@ func (p *BlobPool) Reset(oldHead, newHead *types.Header) {
 	}
 	p.head.Store(newHead)
 	p.state = statedb
+	fallbackRecheck := p.stateFallback
+	p.stateFallback = false
 
 	// Run the reorg between the old and new head and figure out which accounts
-	// need to be rechecked and which transactions need to be readded
+	// need to be rechecked and which transactions need to be readded.
+	var reorgInclusions map[common.Hash]uint64
 	if reinject, inclusions := p.reorg(oldHead, newHead); reinject != nil {
+		reorgInclusions = inclusions
 		var adds []*types.Transaction
 		for addr, txs := range reinject {
 			// Blindly push all the lost transactions back into the pool
@@ -1064,12 +1152,26 @@ func (p *BlobPool) Reset(oldHead, newHead *types.Header) {
 				}
 			}
 			// Recheck the account's pooled transactions to drop included and
-			// invalidated ones
-			p.recheck(addr, inclusions)
+			// invalidated ones. If startup used fallback state, a full recheck below
+			// will handle this account with the same inclusion map.
+			if !fallbackRecheck {
+				p.recheck(addr, inclusions)
+			}
 		}
 		if len(adds) > 0 {
 			p.insertFeed.Send(core.NewTxsEvent{Txs: adds})
 		}
+	}
+	if fallbackRecheck {
+		for addr := range p.index {
+			p.recheck(addr, reorgInclusions)
+		}
+		basefee := uint256.MustFromBig(eip1559.CalcBaseFee(p.chain.Config(), newHead))
+		blobfee := uint256.NewInt(params.BlobTxMinBlobGasprice)
+		if newHead.ExcessBlobGas != nil {
+			blobfee = uint256.MustFromBig(eip4844.CalcBlobFee(p.chain.Config(), newHead))
+		}
+		p.evict = newPriceHeap(basefee, blobfee, p.index)
 	}
 	// Flush out any blobs from limbo that are older than the latest finality
 	if p.chain.Config().IsCancun(newHead.Number, newHead.Time) {
