@@ -87,6 +87,10 @@ var errChainGapped = errors.New("chain gapped")
 // of the current sync cycle is forked with the one advertised by consensus client.
 var errChainForked = errors.New("chain forked")
 
+// errSyncMissingHead is an internal helper error to signal that the persisted
+// skeleton progress references a head header that is not available anymore.
+var errSyncMissingHead = errors.New("sync missing skeleton head")
+
 func init() {
 	// Tuning parameters is nice, but the scratch space must be assignable in
 	// full to peers. It's a useless cornercase to support a dangling half-group.
@@ -268,6 +272,7 @@ func (s *skeleton) startup() {
 	// Wait for startup or teardown. This wait might loop a few times if a beacon
 	// client requests sync head extensions, but not forced reorgs (i.e. they are
 	// giving us new payloads without setting a starting head initially).
+waitHead:
 	for {
 		select {
 		case errc := <-s.terminate:
@@ -314,6 +319,17 @@ func (s *skeleton) startup() {
 					// The skeleton chain is not linked with the local chain anymore,
 					// restart the sync.
 					head = nil
+
+				case errors.Is(err, errSyncMissingHead):
+					// The in-memory progress pointed at a skeleton header that is not
+					// available from the database. Clear the invalid progress before
+					// dropping back to the startup wait loop so the next forced beacon
+					// head rebuilds the skeleton state instead of extending stale
+					// metadata and hitting the same missing header again.
+					log.Warn("Restarting beacon sync after missing skeleton head", "err", err)
+					rawdb.DeleteSkeletonSyncStatus(s.db)
+					s.progress = nil
+					continue waitHead
 
 				case err == errTerminated:
 					// Sync was requested to be terminated from within, stop and
@@ -392,7 +408,11 @@ func (s *skeleton) sync(head *types.Header) (*types.Header, error) {
 	// If we're continuing a previous merge interrupt, just access the existing
 	// old state without initing from disk.
 	if head == nil {
-		head = rawdb.ReadSkeletonHeader(s.db, s.progress.Subchains[0].Head)
+		number := s.progress.Subchains[0].Head
+		head = rawdb.ReadSkeletonHeader(s.db, number)
+		if head == nil {
+			return nil, fmt.Errorf("%w: head=%d", errSyncMissingHead, number)
+		}
 	} else {
 		// Otherwise, initialize the sync, trimming and previous leftovers until
 		// we're consistent with the newly requested chain head
@@ -608,7 +628,10 @@ func (s *skeleton) initSync(head *types.Header) {
 				lastchain := s.progress.Subchains[0]
 				if lastchain.Head == headchain.Tail-1 {
 					lasthead := rawdb.ReadSkeletonHeader(s.db, lastchain.Head)
-					if lasthead.Hash() == head.ParentHash {
+					if lasthead == nil {
+						log.Warn("Dropping skeleton subchain with missing head", "head", lastchain.Head, "tail", lastchain.Tail)
+						s.progress.Subchains = s.progress.Subchains[1:]
+					} else if lasthead.Hash() == head.ParentHash {
 						log.Debug("Extended skeleton subchain with new head", "head", headchain.Tail, "tail", lastchain.Tail)
 						lastchain.Head = headchain.Tail
 						extended = true
