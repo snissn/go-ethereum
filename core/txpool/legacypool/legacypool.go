@@ -320,10 +320,9 @@ func (pool *LegacyPool) Init(gasTip uint64, head *types.Header, reserver txpool.
 	// Initialize the state with head block, or fallback to empty one in
 	// case the head state is not available (might occur when node is not
 	// fully synced).
-	statedb, err := pool.chain.StateAt(head)
-	if err != nil {
-		statedb, err = pool.chain.StateAt(pool.chain.Genesis().Header())
-	}
+	// The fallback marker can be discarded here: legacy pool reset reloads the
+	// head state on each chain-head event and naturally self-corrects.
+	statedb, _, err := txpool.StateAtOrEmpty(pool.chain, head)
 	if err != nil {
 		return err
 	}

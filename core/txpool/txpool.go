@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math/big"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
@@ -40,6 +41,8 @@ const (
 	TxStatusPending
 	TxStatusIncluded
 )
+
+var headStateRetryInterval = 5 * time.Second
 
 // BlockChain defines the minimal set of methods needed to back a tx pool with
 // a chain. Exists to allow mocking the live chain out of tests.
@@ -65,6 +68,32 @@ type BlockChain interface {
 // enter the pool when they are received from the network or submitted locally.
 // They exit the pool when they are included in the blockchain or evicted due to
 // resource constraints.
+type stateAtChain interface {
+	Genesis() *types.Block
+	StateAt(header *types.Header) (*state.StateDB, error)
+}
+
+// StateAtOrEmpty retrieves the state for head, falls back to genesis, and finally
+// to an empty ephemeral state if both are unavailable during initial sync. The
+// fallback return value reports whether the returned state is not the head state.
+func StateAtOrEmpty(chain stateAtChain, head *types.Header) (*state.StateDB, bool, error) {
+	statedb, err := chain.StateAt(head)
+	if err == nil {
+		return statedb, false, nil
+	}
+	headErr := err
+	statedb, err = chain.StateAt(chain.Genesis().Header())
+	if err == nil {
+		log.Warn("Falling back to genesis transaction pool state", "head", head.Number, "headstateerr", headErr)
+		return statedb, true, nil
+	}
+	log.Warn("Falling back to empty transaction pool state", "head", head.Number, "headstateerr", headErr, "genesiserr", err)
+	// Use a throwaway in-memory database for the empty fallback. The retry loop
+	// replaces this state with the real head state once snap sync makes it available.
+	statedb, err = state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+	return statedb, true, err
+}
+
 type TxPool struct {
 	subpools []SubPool // List of subpools for specialized transaction handling
 	chain    BlockChain
@@ -93,10 +122,7 @@ func New(gasTip uint64, chain BlockChain, subpools []SubPool) (*TxPool, error) {
 	// Initialize the state with head block, or fallback to empty one in
 	// case the head state is not available (might occur when node is not
 	// fully synced).
-	statedb, err := chain.StateAt(head)
-	if err != nil {
-		statedb, err = chain.StateAt(chain.Genesis().Header())
-	}
+	statedb, retryHeadState, err := StateAtOrEmpty(chain, head)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +145,7 @@ func New(gasTip uint64, chain BlockChain, subpools []SubPool) (*TxPool, error) {
 			return nil, err
 		}
 	}
-	go pool.loop(head)
+	go pool.loop(head, retryHeadState)
 	return pool, nil
 }
 
@@ -151,7 +177,7 @@ func (p *TxPool) Close() error {
 // loop is the transaction pool's main event loop, waiting for and reacting to
 // outside blockchain events as well as for various reporting and transaction
 // eviction events.
-func (p *TxPool) loop(head *types.Header) {
+func (p *TxPool) loop(head *types.Header, retryHeadState bool) {
 	// Close the termination marker when the pool stops
 	defer close(p.term)
 
@@ -168,9 +194,28 @@ func (p *TxPool) loop(head *types.Header) {
 		resetBusy = make(chan struct{}, 1) // Allow 1 reset to run concurrently
 		resetDone = make(chan *types.Header)
 
-		resetForced bool       // Whether a forced reset was requested, only used in simulator mode
-		resetWaiter chan error // Channel waiting on a forced reset, only used in simulator mode
+		resetForced  bool       // Whether a forced reset was requested, only used in simulator mode
+		resetBlocked bool       // Whether resets are paused until a new event or head-state retry succeeds
+		resetWaiter  chan error // Channel waiting on a forced reset, only used in simulator mode
 	)
+	// If startup used a fallback state because the head state was unavailable,
+	// periodically force resets until the head state can be loaded.
+	var retryHeadStateC <-chan time.Time
+	var retryHeadStateTicker *time.Ticker
+	if retryHeadState {
+		retryHeadStateTicker = time.NewTicker(headStateRetryInterval)
+		retryHeadStateC = retryHeadStateTicker.C
+		defer retryHeadStateTicker.Stop()
+	}
+	stopHeadStateRetry := func() {
+		if retryHeadStateTicker != nil {
+			retryHeadStateTicker.Stop()
+			retryHeadStateTicker = nil
+			retryHeadStateC = nil
+		}
+		retryHeadState = false
+	}
+
 	// Notify the live reset waiter to not block if the txpool is closed.
 	defer func() {
 		if resetWaiter != nil {
@@ -183,18 +228,31 @@ func (p *TxPool) loop(head *types.Header) {
 		// Something interesting might have happened, run a reset if there is
 		// one needed but none is running. The resetter will run on its own
 		// goroutine to allow chain head events to be consumed contiguously.
-		if newHead != oldHead || resetForced {
+		if (newHead != oldHead || resetForced) && !resetBlocked {
 			// Try to inject a busy marker and start a reset if successful
 			select {
 			case resetBusy <- struct{}{}:
 				// Updates the statedb with the new chain head. The head state may be
 				// unavailable if the initial state sync has not yet completed.
-				if statedb, err := p.chain.StateAt(newHead); err != nil {
+				statedb, err := p.chain.StateAt(newHead)
+				if err != nil {
+					if retryHeadState {
+						log.Debug("Head state unavailable, delaying txpool reset", "err", err)
+						resetBlocked = true
+						<-resetBusy
+						if resetWaiter != nil && resetForced {
+							resetWaiter <- err
+							resetWaiter = nil
+						}
+						resetForced = false
+						continue
+					}
 					log.Error("Failed to reset txpool state", "err", err)
 				} else {
 					p.stateLock.Lock()
 					p.state = statedb
 					p.stateLock.Unlock()
+					stopHeadStateRetry()
 				}
 
 				// Busy marker injected, start a new subpool reset
@@ -226,6 +284,15 @@ func (p *TxPool) loop(head *types.Header) {
 		case event := <-newHeadCh:
 			// Chain moved forward, store the head for later consumption
 			newHead = event.Header
+			resetBlocked = false
+
+		case <-retryHeadStateC:
+			if _, err := p.chain.StateAt(newHead); err != nil {
+				log.Debug("Head state unavailable, delaying txpool reset", "err", err)
+			} else {
+				resetForced = true
+				resetBlocked = false
+			}
 
 		case head := <-resetDone:
 			// Previous reset finished, update the old head and allow a new reset
@@ -250,6 +317,10 @@ func (p *TxPool) loop(head *types.Header) {
 			// deterministic. On top of that, run a new reset operation to make
 			// transaction insertions deterministic instead of being stuck in a
 			// queue waiting for a reset.
+			if resetBlocked {
+				syncc <- errors.New("txpool reset blocked waiting for head state")
+				break
+			}
 			resetForced = true
 			resetWaiter = syncc
 		}
