@@ -57,8 +57,8 @@ require (
 	github.com/protolambda/ztyp v0.2.2
 	github.com/rs/cors v1.7.0
 	github.com/shirou/gopsutil v3.21.4-0.20210419000835-c7a38de76ee5+incompatible
-	github.com/snissn/gomap v0.5.1-0.20260607200628-cd25cb97cfa8
-	github.com/snissn/gomap/TreeDB/integration/gethethdb v0.0.0-20260607200628-cd25cb97cfa8
+	github.com/snissn/gomap v0.5.1-0.20260611003734-b0fe716da4bd
+	github.com/snissn/gomap/TreeDB/integration/gethethdb v0.0.0-20260611003734-b0fe716da4bd
 	github.com/status-im/keycard-go v0.2.0
 	github.com/stretchr/testify v1.11.1
 	github.com/supranational/blst v0.3.16

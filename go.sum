@@ -361,12 +361,16 @@ github.com/snissn/gomap v0.5.1-0.20260607053212-5dcfaac81ea2 h1:ZRl909TwbcWBG0tW
 github.com/snissn/gomap v0.5.1-0.20260607053212-5dcfaac81ea2/go.mod h1:WSaOg+m8hiLvRpKSqn3ylr0H4ZMKOHghhJqIg1/RO/4=
 github.com/snissn/gomap v0.5.1-0.20260607200628-cd25cb97cfa8 h1:MJ1BfTXxUZ2VduxyobxWz2XFsSZ4pGv2XNEK5aIp9zM=
 github.com/snissn/gomap v0.5.1-0.20260607200628-cd25cb97cfa8/go.mod h1:WSaOg+m8hiLvRpKSqn3ylr0H4ZMKOHghhJqIg1/RO/4=
+github.com/snissn/gomap v0.5.1-0.20260611003734-b0fe716da4bd h1:dpc5XZnXfM3cGXgtQ7y66FestzcBVoIVh0T3LsY0TEE=
+github.com/snissn/gomap v0.5.1-0.20260611003734-b0fe716da4bd/go.mod h1:WSaOg+m8hiLvRpKSqn3ylr0H4ZMKOHghhJqIg1/RO/4=
 github.com/snissn/gomap/TreeDB/integration/gethethdb v0.0.0-20260606191850-7c38b993ad20 h1:7MZNmxeiaoYhB6oVqoBgJQ1xBMQBXgfEUJvc0BV+mKA=
 github.com/snissn/gomap/TreeDB/integration/gethethdb v0.0.0-20260606191850-7c38b993ad20/go.mod h1:Ww8bNDF/RbvAuvGdbkhwIolF7XIXuJNORTnyvyTamJE=
 github.com/snissn/gomap/TreeDB/integration/gethethdb v0.0.0-20260607053212-5dcfaac81ea2 h1:bxbrnfY0myK/Qn3xqUZoA31P9EK71tYFT23aa1HFCc4=
 github.com/snissn/gomap/TreeDB/integration/gethethdb v0.0.0-20260607053212-5dcfaac81ea2/go.mod h1:Ww8bNDF/RbvAuvGdbkhwIolF7XIXuJNORTnyvyTamJE=
 github.com/snissn/gomap/TreeDB/integration/gethethdb v0.0.0-20260607200628-cd25cb97cfa8 h1:5KGR6pe2moa0MTNlX11InrQho04LGBqapUT/IQgxDMM=
 github.com/snissn/gomap/TreeDB/integration/gethethdb v0.0.0-20260607200628-cd25cb97cfa8/go.mod h1:Ww8bNDF/RbvAuvGdbkhwIolF7XIXuJNORTnyvyTamJE=
+github.com/snissn/gomap/TreeDB/integration/gethethdb v0.0.0-20260611003734-b0fe716da4bd h1:01ZZBIDF3aX0sD2h4L1Pfv4Gb2voqMK5iUEB14FPeCY=
+github.com/snissn/gomap/TreeDB/integration/gethethdb v0.0.0-20260611003734-b0fe716da4bd/go.mod h1:Ww8bNDF/RbvAuvGdbkhwIolF7XIXuJNORTnyvyTamJE=
 github.com/status-im/keycard-go v0.2.0 h1:QDLFswOQu1r5jsycloeQh3bVU8n/NatHHaZobtDnDzA=
 github.com/status-im/keycard-go v0.2.0/go.mod h1:wlp8ZLbsmrF6g6WjugPAx+IzoLrkdf9+mHxBEeo3Hbg=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
